@@ -52,7 +52,7 @@ export async function printOrder(order: Order, config: PrintConfig): Promise<voi
   const { printers, departmentPrinterMap } = await fetchPrinterData();
   
   // Generate print jobs
-  const jobs = generateAllPrintJobs(order, printers, departmentPrinterMap, config);
+  const jobs = await generateAllPrintJobs(order, printers, departmentPrinterMap, config);
   
   if (jobs.length === 0) {
     console.warn("[Print Client] No print jobs generated for order");

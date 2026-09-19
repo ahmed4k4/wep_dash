@@ -42,6 +42,7 @@ const HOST = '127.0.0.1';
 
 // In-memory printer registry (loaded from config or auto-discovered)
 const printers = new Map();
+const capturedJobs = [];
 
 // Configure your printers here or load from a config file
 const PRINTER_CONFIG = {
@@ -348,6 +349,39 @@ const server = http.createServer(async (req, res) => {
     return;
   }
   
+  if (url.pathname === '/capture' && req.method === 'POST') {
+    let body = '';
+    req.on('data', chunk => { body += chunk; });
+    req.on('end', () => {
+      try {
+        const { printerId, data } = JSON.parse(body);
+        if (!printerId || typeof data !== 'string') {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'Missing printerId or data' }));
+          return;
+        }
+        capturedJobs.push({
+          printerId,
+          data,
+          bytes: Buffer.from(data, 'binary').length,
+          requestedAt: new Date().toISOString(),
+        });
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: true, printerId, captured: capturedJobs.length }));
+      } catch (err) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: err.message }));
+      }
+    });
+    return;
+  }
+
+  if (url.pathname === '/capture' && req.method === 'GET') {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ jobs: capturedJobs }));
+    return;
+  }
+
   if (url.pathname === '/print' && req.method === 'POST') {
     let body = '';
     req.on('data', chunk => { body += chunk; });
@@ -403,6 +437,8 @@ server.listen(PORT, HOST, () => {
   console.log(`[Print Server] Running on http://${HOST}:${PORT}`);
   console.log(`[Print Server] Endpoints:`);
   console.log(`  POST http://${HOST}:${PORT}/print`);
+  console.log(`  POST http://${HOST}:${PORT}/capture`);
+  console.log(`  GET  http://${HOST}:${PORT}/capture`);
   console.log(`  GET  http://${HOST}:${PORT}/printers`);
   console.log(`  GET  http://${HOST}:${PORT}/health`);
 });
