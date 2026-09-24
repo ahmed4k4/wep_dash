@@ -41,3 +41,11 @@ yarn-error.log*
 next-env.d.ts
 
 .vercel
+
+
+# Exclude executables and agent builds
+*.exe
+dist/
+**/dist/
+print-agent/dist/
+print-agent/node_modules/

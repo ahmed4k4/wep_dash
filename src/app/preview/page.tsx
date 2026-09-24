@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { generateAllPrintJobs } from "@/lib/printing";
+import { INVOICE_CONFIG } from "@/printing/invoice";
 import type { Order, Printer } from "@/types";
 
 /**
@@ -61,7 +62,6 @@ function decodeEscpos(data: string): DecodedPiece[] {
 
     if (b === GS && bytes[i + 1] === 0x76 && bytes[i + 2] === 0x30) {
       // GS v 0 m xl xh yl yh
-      const mode = bytes[i + 3];
       const xl = bytes[i + 4];
       const xh = bytes[i + 5];
       const yl = bytes[i + 6];
@@ -119,8 +119,11 @@ const SAMPLE_PRINTERS: Printer[] = [
 export default function PrintPreviewPage() {
   const [jobs, setJobs] = useState<DecodedJob[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [paperWidth, setPaperWidth] = useState<"58mm" | "80mm">(
+    INVOICE_CONFIG.paper.width
+  );
 
-  const generate = async () => {
+  const generate = async (width: "58mm" | "80mm" = paperWidth) => {
     const printers = new Map(SAMPLE_PRINTERS.map((p) => [p.id, p]));
     const deptMap = new Map<string, string>([
       ["جبنة", "pr-jubna"],
@@ -130,7 +133,7 @@ export default function PrintPreviewPage() {
       SAMPLE_ORDER,
       printers,
       deptMap,
-      { shopName: "محل الجبنة والجزارة" }
+      { shopName: INVOICE_CONFIG.shop.name, paperWidth: width }
     );
     return raw.map((j) => ({
       printerId: j.printerId,
@@ -153,11 +156,16 @@ export default function PrintPreviewPage() {
     };
   }, []);
 
-  const handleRegenerate = () => {
+  const handleRegenerate = (width: "58mm" | "80mm" = paperWidth) => {
     setError(null);
-    generate()
+    generate(width)
       .then(setJobs)
       .catch((e) => setError(e instanceof Error ? e.message : String(e)));
+  };
+
+  const handlePaperChange = (width: "58mm" | "80mm") => {
+    setPaperWidth(width);
+    handleRegenerate(width);
   };
 
   return (
@@ -170,12 +178,39 @@ export default function PrintPreviewPage() {
               توليد ESC/POS للطلب التجريبي وفك ترميزه لعرضه بصرياً
             </p>
           </div>
-          <button
-            onClick={handleRegenerate}
-            className="rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700"
-          >
-            إعادة التوليد
-          </button>
+          <div className="flex items-center gap-2">
+            <select
+              value={paperWidth}
+              onChange={(e) => handlePaperChange(e.target.value as "58mm" | "80mm")}
+              className="rounded-md border border-slate-300 bg-white px-3 py-2 text-sm"
+            >
+              <option value="58mm">58mm</option>
+              <option value="80mm">80mm</option>
+            </select>
+            <button
+              onClick={() => handleRegenerate()}
+              className="rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700"
+            >
+              إعادة التوليد
+            </button>
+          </div>
+        </div>
+
+        <div className="mb-6 rounded-md border border-slate-200 bg-white p-4 text-xs text-slate-600">
+          <p className="mb-1 font-semibold text-slate-700">
+            الإعداد المركزي للفاتورة (من src/printing/invoice)
+          </p>
+          <p>
+            المتجر: {INVOICE_CONFIG.shop.name} | العنوان: {INVOICE_CONFIG.shop.address} |
+            الهاتف: {INVOICE_CONFIG.shop.phone}
+          </p>
+          <p>
+            الخط: {INVOICE_CONFIG.typography.fontFamily} | حجم الترويسة:{" "}
+            {INVOICE_CONFIG.typography.headerSize} | حجم النص:{" "}
+            {INVOICE_CONFIG.typography.bodySize} | تباعد الأقسام:{" "}
+            {INVOICE_CONFIG.spacing.sections} | الفاصل:{" "}
+            {INVOICE_CONFIG.separators.style}
+          </p>
         </div>
 
         {error && (

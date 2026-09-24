@@ -12,6 +12,8 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    // The Windows Print Agent is a separate Node/Electron project.
+    "print-agent/**",
   ]),
 ]);
 

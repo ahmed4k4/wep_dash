@@ -1,6 +1,7 @@
 "use client";
 
 import { DepartmentPrinterPanel } from "@/components/department-printer-management";
+import { LocalPrintersPanel } from "@/components/local-printers-panel";
 
 export default function PrintersPage() {
   return (
@@ -13,7 +14,8 @@ export default function PrintersPage() {
           </p>
         </div>
       </header>
-      <section className="flex-1 p-6 overflow-y-auto">
+      <section className="flex-1 space-y-6 p-6 overflow-y-auto">
+        <LocalPrintersPanel />
         <DepartmentPrinterPanel showDepartmentsTab={false} />
       </section>
     </main>

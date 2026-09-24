@@ -4,6 +4,58 @@ import { generateAllPrintJobs } from "@/lib/printing";
 import type { PrintConfig } from "@/lib/printing";
 import type { Order, Printer } from "@/types";
 import { fetchPrinters, fetchDepartments } from "@/lib/departments";
+import { getLocalPrinters, type LocalPrinter } from "@/lib/local-printers";
+import { getAssignment } from "@/lib/local-printer-assignment";
+
+/** Parse "0x04b8:0x0e15" into { vendorId, productId } hex strings. */
+function parseUsbDeviceId(id?: string): { vendorId?: string; productId?: string } {
+  if (!id) return {};
+  const m = id.match(/^(0x[0-9a-fA-F]+|\d+)[:/,-](0x[0-9a-fA-F]+|\d+)$/);
+  if (!m) return {};
+  const vendorId = m[1].startsWith("0x") ? m[1] : `0x${Number(m[1]).toString(16)}`;
+  const productId = m[2].startsWith("0x") ? m[2] : `0x${Number(m[2]).toString(16)}`;
+  return { vendorId, productId };
+}
+
+function localToDestination(local: LocalPrinter) {
+  if (local.connection === "usb") {
+    const ids = parseUsbDeviceId(local.usbDeviceId);
+    return { printerId: local.id, type: "usb" as const, vendorId: ids.vendorId, productId: ids.productId };
+  }
+  return { printerId: local.id, type: "network" as const, address: local.address, port: local.port };
+}
+
+/**
+ * Resolve the print destination for a logical printer id.
+ * Prefers a locally-assigned agent printer (this machine); otherwise falls
+ * back to the Firebase printer config.
+ */
+async function resolveDestination(
+  logicalId: string,
+  fallback: Printer
+): Promise<{
+  printerId: string;
+  type: "usb" | "network";
+  address?: string;
+  port?: string | number;
+  vendorId?: string;
+  productId?: string;
+}> {
+  const localId = getAssignment(logicalId);
+  if (localId) {
+    const { printers } = await getLocalPrinters();
+    const local = printers.find((p) => p.id === localId);
+    if (local) return localToDestination(local);
+  }
+  return {
+    printerId: fallback.id,
+    type: fallback.type,
+    address: fallback.address,
+    port: fallback.port,
+    vendorId: fallback.type === "usb" ? `0x${fallback.vendorId?.toString(16) || "0"}` : undefined,
+    productId: fallback.type === "usb" ? `0x${fallback.productId?.toString(16) || "0"}` : undefined,
+  };
+}
 
 const PRINT_SERVER_URL = process.env.NEXT_PUBLIC_PRINT_SERVER_URL || "http://127.0.0.1:3001";
 
@@ -69,7 +121,8 @@ export async function printOrder(order: Order, config: PrintConfig): Promise<voi
     }
     
     try {
-      console.log(`[Print Client] POST → ${PRINT_SERVER_URL}/print (printer: ${printer.id}, type: ${printer.type})`);
+      const dest = await resolveDestination(printer.id, printer);
+      console.log(`[Print Client] POST → ${PRINT_SERVER_URL}/print (printer: ${dest.printerId}, type: ${dest.type})`);
 
       let response: Response;
       try {
@@ -77,13 +130,13 @@ export async function printOrder(order: Order, config: PrintConfig): Promise<voi
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            printerId: printer.id,
+            printerId: dest.printerId,
             data: job.data,
-            type: printer.type,
-            address: printer.address,
-            port: printer.port,
-            vendorId: printer.type === "usb" ? `0x${printer.vendorId?.toString(16) || "0"}` : undefined,
-            productId: printer.type === "usb" ? `0x${printer.productId?.toString(16) || "0"}` : undefined,
+            type: dest.type,
+            address: dest.address,
+            port: dest.port,
+            vendorId: dest.vendorId,
+            productId: dest.productId,
           }),
         });
       } catch (fetchErr) {

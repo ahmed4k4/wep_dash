@@ -1,40 +1,41 @@
 /**
- * Central invoice visual style configuration.
+ * Backward-compatibility bridge for the legacy `InvoiceStyle` shape.
  *
- * Changing the receipt design should NEVER require touching networking
- * or printer communication code — only edit values in this file (or
- * pass an override) and the templates/renderer will follow.
+ * IMPORTANT: This is NOT a second source of truth. It DERIVES its values
+ * from the centralized configuration in `@/printing/invoice`. Edit the
+ * invoice design there — never here.
+ *
+ * The legacy flat `InvoiceStyle` is kept only so older imports keep
+ * type-checking. New code should use `InvoiceConfig` / `INVOICE_CONFIG`.
  */
 
 import type { PaperWidth } from "@/printing/config/paper";
+import { INVOICE_CONFIG } from "@/printing/invoice/invoice-config";
+import { INVOICE_CONTENT } from "@/printing/invoice/invoice-content";
+import type { SeparatorStyle } from "@/printing/invoice/invoice-types";
 
-/** Separator style variants: dashed, solid, double, none */
-export type SeparatorStyle = "dashed" | "solid" | "double" | "none";
+export type { SeparatorStyle } from "@/printing/invoice/invoice-types";
 
+/** Legacy flat style shape (derived, read-only by convention). */
 export interface InvoiceStyle {
-  // ---- Shop identity ----
   shopName: string;
   shopSubtitle: string;
   showLogo: boolean;
-  logoSizePx: number; // vertical logo height when rendered as image
+  logoSizePx: number;
 
-  // ---- Paper ----
   paperWidth: PaperWidth;
 
-  // ---- Typography ----
   headerFontSize: number;
   titleFontSize: number;
   bodyFontSize: number;
   smallFontSize: number;
-  lineSpacing: number; // multiplier applied to each line height
-  sectionSpacing: number; // vertical gap between sections
-  itemSpacing: number; // vertical gap inside an item block
+  lineSpacing: number;
+  sectionSpacing: number;
+  itemSpacing: number;
 
-  // ---- RTL / alignment ----
-  fontFamily: string; // bundled Arabic-capable font (e.g. Noto Sans Arabic)
+  fontFamily: string;
   rtl: boolean;
 
-  // ---- Which fields to show ----
   showCustomer: boolean;
   showPhone: boolean;
   showAddress: boolean;
@@ -52,52 +53,58 @@ export interface InvoiceStyle {
   showWindowNumber: boolean;
   showCreator: boolean;
 
-  // ---- Footer ----
   footerText: string;
   showFooter: boolean;
 
-  // ---- Graphics ----
   separatorStyle: SeparatorStyle;
 }
 
-export const DEFAULT_INVOICE_STYLE: InvoiceStyle = {
-  shopName: "محل الجبنة والجزارة",
-  shopSubtitle: "SALES INVOICE",
-  showLogo: false,
-  logoSizePx: 56,
+/** Derive the legacy flat style from the centralized configuration. */
+export function toLegacyInvoiceStyle(): InvoiceStyle {
+  const { shop, paper, typography, spacing, visibility, separators, footer } =
+    INVOICE_CONFIG;
+  return {
+    shopName: shop.name,
+    shopSubtitle: shop.subtitle,
+    showLogo: shop.logoEnabled,
+    logoSizePx: shop.logoSizePx,
 
-  paperWidth: "58mm",
+    paperWidth: paper.width,
 
-  headerFontSize: 18,
-  titleFontSize: 15,
-  bodyFontSize: 12,
-  smallFontSize: 10,
-  lineSpacing: 1.25,
-  sectionSpacing: 10,
-  itemSpacing: 4,
+    headerFontSize: typography.headerSize,
+    titleFontSize: typography.titleSize,
+    bodyFontSize: typography.bodySize,
+    smallFontSize: typography.smallSize,
+    lineSpacing: typography.lineHeight,
+    sectionSpacing: spacing.sections,
+    itemSpacing: spacing.rows,
 
-  fontFamily: "NotoSansArabic",
-  rtl: true,
+    fontFamily: typography.fontFamily,
+    rtl: true,
 
-  showCustomer: true,
-  showPhone: true,
-  showAddress: true,
-  showNotes: true,
-  showInvoiceNumber: true,
-  showDate: true,
-  showTime: true,
-  showDepartment: true,
-  showUnitPrice: false, // existing data has no unit price — kept false by default
-  showQuantity: true,
-  showWeight: true,
-  showSubtotal: true,
-  showDiscount: false,
-  showTotal: true,
-  showWindowNumber: true,
-  showCreator: false,
+    showCustomer: visibility.customer,
+    showPhone: visibility.phone,
+    showAddress: visibility.address,
+    showNotes: visibility.notes,
+    showInvoiceNumber: visibility.invoiceNumber,
+    showDate: visibility.date,
+    showTime: visibility.time,
+    showDepartment: visibility.department,
+    showUnitPrice: visibility.unitPrice,
+    showQuantity: visibility.quantity,
+    showWeight: visibility.weight,
+    showSubtotal: visibility.subtotal,
+    showDiscount: visibility.discount,
+    showTotal: visibility.total,
+    showWindowNumber: visibility.windowNumber,
+    showCreator: visibility.creator,
 
-  footerText: "شكراً لتعاملكم معنا",
-  showFooter: true,
+    footerText: footer.text || INVOICE_CONTENT.title,
+    showFooter: footer.enabled && visibility.footer,
 
-  separatorStyle: "dashed",
-};
+    separatorStyle: separators.style,
+  };
+}
+
+/** @deprecated Use INVOICE_CONFIG from `@/printing/invoice` instead. */
+export const DEFAULT_INVOICE_STYLE: InvoiceStyle = toLegacyInvoiceStyle();

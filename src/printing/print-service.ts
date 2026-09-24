@@ -5,20 +5,33 @@
  *   Order + printer assignment → template blocks → 1bpp bitmap → ESC/POS
  * returns same shape as legacy `generateAllPrintJobs` ({ printerId, data })
  * so print-client.ts keeps working with only `await`.
+ *
+ * The invoice DESIGN comes entirely from the centralized configuration in
+ * `src/printing/invoice/`. This service only: builds blocks (templates),
+ * rasterises them (Canvas), and encodes ESC/POS raster (GS v 0). It must
+ * not contain design literals.
  */
 
 import type { Order, Printer, DepartmentName } from "@/types";
-import { fullInvoiceBlocks, departmentBlocks } from "@/printing/templates";
+import { buildFullInvoice, buildDepartmentInvoice } from "@/printing/templates";
 import type { RasterBlock } from "@/printing/renderer/raster";
 import { rasterizeBlocks } from "@/printing/renderer/raster";
 import { buildRasterJob } from "@/printing/renderer/escpos";
-import { getPaperConfig } from "@/printing/config/paper";
-import { DEFAULT_INVOICE_STYLE } from "@/printing/styles/invoice-style";
+import { getPaperConfig, PAPER_CONFIGS } from "@/printing/config/paper";
+import {
+  INVOICE_CONFIG,
+  resolveInvoiceConfig,
+} from "@/printing/invoice/invoice-config";
+import type { InvoiceConfigOverride } from "@/printing/invoice/invoice-types";
 
 export interface PrintConfig {
-  shopName: string;
+  shopName?: string;
   shopAddress?: string;
   shopPhone?: string;
+  /** Optional deep override merged onto the centralized invoice config. */
+  invoiceOverride?: InvoiceConfigOverride;
+  /** Optional paper width override ("58mm" | "80mm"). */
+  paperWidth?: "58mm" | "80mm";
 }
 
 export type PrintJob = RenderedJob;
@@ -69,16 +82,62 @@ async function renderToEscpos(
   });
 }
 
+/**
+ * Build the effective invoice override from the (legacy) PrintConfig so
+ * existing callers that pass `shopName` keep working — they now simply
+ * override the centralized config's shop name.
+ */
+function buildOverride(config: PrintConfig): InvoiceConfigOverride | undefined {
+  const override: InvoiceConfigOverride = {};
+  const shop: InvoiceConfigOverride["shop"] = {};
+  if (config.shopName) shop.name = config.shopName;
+  if (config.shopAddress) shop.address = config.shopAddress;
+  if (config.shopPhone) shop.phone = config.shopPhone;
+  if (Object.keys(shop).length) override.shop = shop;
+  if (config.paperWidth) {
+    override.paper = {
+      width: config.paperWidth,
+      marginPx: PAPER_CONFIGS[config.paperWidth].marginPx,
+    };
+  }
+  if (config.invoiceOverride) {
+    return deepMergeOverride(override, config.invoiceOverride);
+  }
+  return Object.keys(override).length ? override : undefined;
+}
+
+function deepMergeOverride(
+  a: InvoiceConfigOverride,
+  b: InvoiceConfigOverride
+): InvoiceConfigOverride {
+  const out: InvoiceConfigOverride = { ...a };
+  for (const k of Object.keys(b) as (keyof InvoiceConfigOverride)[]) {
+    const bv = b[k];
+    const av = out[k];
+    if (
+      bv && typeof bv === "object" && !Array.isArray(bv) &&
+      av && typeof av === "object" && !Array.isArray(av)
+    ) {
+      out[k] = deepMergeOverride(
+        av as InvoiceConfigOverride,
+        bv as InvoiceConfigOverride
+      ) as never;
+    } else {
+      out[k] = bv as never;
+    }
+  }
+  return out;
+}
+
 export async function generateAllPrintJobs(
   order: Order,
   printers: Map<string, Printer>,
   departmentPrinterMap: Map<DepartmentName, string>,
   config: PrintConfig
 ): Promise<RenderedJob[]> {
-  const style = {
-    ...DEFAULT_INVOICE_STYLE,
-    shopName: config.shopName || DEFAULT_INVOICE_STYLE.shopName,
-  };
+  const override = buildOverride(config);
+  const resolved = resolveInvoiceConfig(override);
+  const paperWidth = resolved.paper.width;
   const jobs: RenderedJob[] = [];
 
   // Department jobs
@@ -88,16 +147,21 @@ export async function generateAllPrintJobs(
     const printerId = departmentPrinterMap.get(dept);
     const printer = printerId ? printers.get(printerId) : undefined;
     if (!printer) continue;
-    const bytes = await renderToEscpos(departmentBlocks(order, dept, style), style.paperWidth);
+    const bytes = await renderToEscpos(buildDepartmentInvoice(order, dept), paperWidth);
     jobs.push({ printerId: printer.id, data: bytesToBinaryString(bytes) });
   }
 
   // Full invoice
   const full = Array.from(printers.values()).find((p) => p.isFullInvoicePrinter);
   if (full) {
-    const bytes = await renderToEscpos(fullInvoiceBlocks(order, style), style.paperWidth);
+    const bytes = await renderToEscpos(buildFullInvoice(order), paperWidth);
     jobs.push({ printerId: full.id, data: bytesToBinaryString(bytes) });
   }
 
   return jobs;
+}
+
+/** Expose the effective paper width (used by callers/preview). */
+export function currentPaperWidth(): "58mm" | "80mm" {
+  return INVOICE_CONFIG.paper.width;
 }

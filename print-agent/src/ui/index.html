@@ -1,0 +1,151 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="utf-8" />
+  <meta http-equiv="Content-Security-Policy"
+        content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'none';" />
+  <title>Ahmed POS Print Agent</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div id="app">
+    <!-- Header -->
+    <header class="topbar">
+      <div class="brand">
+        <span class="logo">AP</span>
+        <div>
+          <h1>Ahmed POS Print Agent</h1>
+          <p class="subtitle">Local printer bridge · 127.0.0.1</p>
+        </div>
+      </div>
+      <div id="status-pill" class="pill pill--unknown">● جارٍ التشغيل…</div>
+    </header>
+
+    <!-- Nav -->
+    <nav class="tabs">
+      <button class="tab is-active" data-view="dashboard">الطابعات</button>
+      <button class="tab" data-view="settings">الإعدادات</button>
+    </nav>
+
+    <!-- Dashboard -->
+    <section id="view-dashboard" class="view is-active">
+      <div class="toolbar">
+        <button id="btn-add" class="btn btn--primary">+ إضافة طابعة</button>
+        <button id="btn-scan" class="btn">فحص طابعات USB</button>
+        <button id="btn-refresh" class="btn">تحديث</button>
+      </div>
+      <div id="printers-list" class="cards"></div>
+      <div id="dashboard-empty" class="empty hidden">
+        <p>لا توجد طابعات مُهيأة بعد.</p>
+        <button class="btn btn--primary" data-action="setup">بدء الإعداد</button>
+      </div>
+    </section>
+
+    <!-- Settings -->
+    <section id="view-settings" class="view">
+      <div class="card">
+        <h2>الإعدادات</h2>
+        <label class="row">
+          <span>بدء التشغيل مع Windows</span>
+          <input type="checkbox" id="set-startWithWindows" />
+        </label>
+        <div class="row">
+          <span>المنفذ المحلي</span>
+          <code id="set-port">3001</code>
+        </div>
+        <div class="row">
+          <span>ملف الإعداد</span>
+          <code id="set-configPath" class="mono small"></code>
+        </div>
+        <div class="row">
+          <span>الإصدار</span>
+          <code id="set-version">-</code>
+        </div>
+        <div class="actions">
+          <button id="btn-restart" class="btn">إعادة تشغيل الخدمة</button>
+        </div>
+      </div>
+    </section>
+  </div>
+
+  <!-- Printer form modal -->
+  <div id="modal" class="modal hidden">
+    <div class="modal__panel">
+      <h2 id="modal-title">إضافة طابعة</h2>
+      <div class="field">
+        <label for="f-name">اسم الطابعة</label>
+        <input id="f-name" type="text" placeholder="مثال: طابعة الجزارة" />
+      </div>
+
+      <div class="field">
+        <label>نوع الاتصال</label>
+        <div class="segmented">
+          <label><input type="radio" name="conn" value="tcp" checked /> TCP/IP</label>
+          <label><input type="radio" name="conn" value="usb" /> USB</label>
+        </div>
+      </div>
+
+      <div id="tcp-fields">
+        <div class="field">
+          <label for="f-address">عنوان IP</label>
+          <input id="f-address" type="text" placeholder="192.168.1.50" inputmode="decimal" />
+        </div>
+        <div class="field">
+          <label for="f-port">المنفذ</label>
+          <input id="f-port" type="number" value="9100" min="1" max="65535" />
+        </div>
+      </div>
+
+      <div id="usb-fields" class="hidden">
+        <div class="field">
+          <label>طابعات USB المكتشفة</label>
+          <div id="usb-device-list" class="usb-list"></div>
+        </div>
+        <div class="field">
+          <label for="f-usbDeviceId">معرّف USB (vendorId:productId)</label>
+          <input id="f-usbDeviceId" type="text" placeholder="0x04b8:0x0e15" />
+        </div>
+      </div>
+
+      <div class="field">
+        <label>عرض الورق</label>
+        <div class="segmented">
+          <label><input type="radio" name="paper" value="58" checked /> 58mm</label>
+          <label><input type="radio" name="paper" value="80" /> 80mm</label>
+        </div>
+      </div>
+
+      <div id="modal-error" class="alert hidden"></div>
+
+      <div class="actions">
+        <button id="btn-test" class="btn">اختبار الطباعة</button>
+        <button id="btn-cancel" class="btn">إلغاء</button>
+        <button id="btn-save" class="btn btn--primary">حفظ</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- First-run setup modal -->
+  <div id="setup" class="modal hidden">
+    <div class="modal__panel">
+      <h2>الإعداد الأولي</h2>
+      <p class="muted">
+        كم عدد الطابعات التي تريد تهيئتها على هذا الجهاز؟ يمكنك إضافة أي عدد.
+      </p>
+      <div class="field">
+        <label for="setup-count">عدد الطابعات</label>
+        <input id="setup-count" type="number" value="1" min="1" max="20" />
+      </div>
+      <div class="actions">
+        <button id="btn-setup-start" class="btn btn--primary">بدء الإضافة</button>
+        <button id="btn-setup-skip" class="btn">تخطي</button>
+      </div>
+      <p id="setup-progress" class="muted small"></p>
+    </div>
+  </div>
+
+  <div id="toast" class="toast hidden"></div>
+
+  <script src="renderer.js"></script>
+</body>
+</html>

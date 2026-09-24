@@ -1,0 +1,49 @@
+{
+  "name": "ahmed-pos-print-agent",
+  "version": "1.0.0",
+  "description": "Ahmed POS Print Agent - local Windows print service for thermal receipt printers (USB/TCP).",
+  "author": "Archai Solutions",
+  "license": "UNLICENSED",
+  "private": true,
+  "main": "src/main/main.js",
+  "scripts": {
+    "start": "electron .",
+    "dev": "electron . --dev",
+    "dist": "electron-builder --win nsis",
+    "dist:dir": "electron-builder --win --dir"
+  },
+  "dependencies": {
+    "electron-store": "^8.2.0"
+  },
+  "optionalDependencies": {
+    "usb": "^2.14.0"
+  },
+  "devDependencies": {
+    "electron": "^31.0.0",
+    "electron-builder": "^24.13.3"
+  },
+  "build": {
+    "appId": "com.archai.ahmedpos.printagent",
+    "productName": "Ahmed POS Print Agent",
+    "artifactName": "Ahmed-POS-Print-Agent-Setup-${version}.${ext}",
+    "win": {
+      "target": [
+        { "target": "nsis", "arch": ["x64"] }
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "runAfterFinish": true,
+      "shortcutName": "Ahmed POS Print Agent"
+    },
+    "files": [
+      "src/**/*",
+      "assets/**/*",
+      "package.json"
+    ]
+  }
+}

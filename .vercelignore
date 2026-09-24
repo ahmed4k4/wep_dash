@@ -1,0 +1,10 @@
+node_modules
+**/node_modules
+.next
+.vercel
+dist
+**/dist
+
+docs
+print-agent/node_modules
+print-agent/dist
