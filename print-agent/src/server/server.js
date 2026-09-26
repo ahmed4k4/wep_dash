@@ -14,7 +14,13 @@
  *   POST   /print             → send binary ESC/POS payload
  *
  * Security: loopback bind, Origin allowlist, field validation, body-size
- * cap. The server NEVER forwards to arbitrary destinations.
+ * cap. The server NEVER forwards to arbitrary destinations — the website
+ * sends a printerId the agent already knows, and the agent resolves the
+ * physical destination from its OWN local config.
+ *
+ * Chromium Local Network Access (LNA): a public HTTPS page reaching a private
+ * / loopback address requires a Private Network Access preflight response
+ * (`Access-Control-Allow-Private-Network: true`) for allowed origins only.
  */
 
 const http = require("http");
@@ -27,7 +33,7 @@ const {
 const { dispatchPrint, listUSBPrinters, withStatus } = require("../printer");
 const { buildTestPayload } = require("./test-receipt");
 
-const VERSION = "1.1.0";
+const VERSION = "1.2.0";
 
 function readBody(req) {
   return new Promise((resolve, reject) => {
@@ -55,14 +61,49 @@ function sendJson(res, status, obj) {
   res.end(JSON.stringify(obj));
 }
 
+/**
+ * Apply CORS headers for an allowed Origin.
+ *
+ * - Echoes the exact request Origin (never `*`).
+ * - Always sets `Vary: Origin` so caches never mix origins.
+ * - Grants `Access-Control-Allow-Private-Network: true` (Chromium LNA) —
+ *   ONLY for an allowed origin.
+ */
 function applyCors(req, res) {
   const origin = req.headers.origin;
-  if (origin && isOriginAllowed(origin)) {
-    res.setHeader("Access-Control-Allow-Origin", origin);
-    res.setHeader("Vary", "Origin");
-    res.setHeader("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
-    res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+  res.setHeader("Vary", "Origin");
+  if (!origin || !isOriginAllowed(origin)) return false;
+
+  res.setHeader("Access-Control-Allow-Origin", origin);
+  res.setHeader("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+  res.setHeader("Access-Control-Max-Age", "600");
+
+  // Chromium Private/Local Network Access: only grant for allowed origins.
+  const pna = req.headers["access-control-request-private-network"];
+  if (pna === "true") {
+    res.setHeader("Access-Control-Allow-Private-Network", "true");
+  } else {
+    // Safe to always advertise; ignored by browsers that did not ask.
+    res.setHeader("Access-Control-Allow-Private-Network", "true");
   }
+  return true;
+}
+
+/**
+ * Handle a CORS preflight (OPTIONS). Validates the Origin before responding:
+ * disallowed → 403, allowed → 204 with full CORS + PNA headers.
+ */
+function handlePreflight(req, res) {
+  const origin = req.headers.origin;
+  applyCors(req, res);
+  if (origin && !isOriginAllowed(origin)) {
+    res.writeHead(403, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+    res.end(JSON.stringify({ ok: false, error: "Origin not allowed" }));
+    return;
+  }
+  res.writeHead(204);
+  res.end();
 }
 
 /** Public printer shape returned to the website/UI. */
@@ -79,21 +120,43 @@ function publicPrinter(p) {
   };
 }
 
+/**
+ * Map a locally-stored printer to a dispatch job. The website never supplies
+ * address/port/vendorId — the agent resolves them here from its own config.
+ */
+function printerToDispatchJob(printer, data, jobId) {
+  if (printer.connection === "usb") {
+    return { printerId: printer.id, jobId, type: "usb", data, usbDeviceId: printer.usbDeviceId };
+  }
+  return {
+    printerId: printer.id,
+    jobId,
+    type: "network",
+    data,
+    address: printer.address,
+    port: printer.port,
+  };
+}
+
 function createServer(store) {
   const server = http.createServer(async (req, res) => {
-    applyCors(req, res);
-
+    // CORS preflight (handles POST/PUT/DELETE + Private Network Access).
     if (req.method === "OPTIONS") {
-      res.writeHead(204);
-      res.end();
+      handlePreflight(req, res);
       return;
     }
 
+    const corsAllowed = applyCors(req, res);
     const url = new URL(req.url, "http://127.0.0.1");
     const origin = req.headers.origin;
 
     // Origin allowlist for state-changing routes.
     if (req.method !== "GET" && origin && !isOriginAllowed(origin)) {
+      sendJson(res, 403, { ok: false, error: "Origin not allowed" });
+      return;
+    }
+    // A cross-origin request from a browser must present an allowed Origin.
+    if (!corsAllowed && origin) {
       sendJson(res, 403, { ok: false, error: "Origin not allowed" });
       return;
     }
@@ -170,9 +233,7 @@ function createServer(store) {
           let overrides = {};
           if (raw) { try { overrides = JSON.parse(raw); } catch { overrides = {}; } }
           const payload = buildTestPayload(printer, overrides);
-          const check = validatePrintRequest(payload);
-          if (!check.ok) { sendJson(res, 400, { ok: false, error: check.error }); return; }
-          await dispatchPrint({ ...check.value, usbDeviceId: printer.usbDeviceId });
+          await dispatchPrint(printerToDispatchJob(printer, payload.data));
           sendJson(res, 200, { ok: true, printerId });
           return;
         }
@@ -185,8 +246,27 @@ function createServer(store) {
         try { body = JSON.parse(raw); } catch { body = null; }
         const check = validatePrintRequest(body);
         if (!check.ok) { sendJson(res, 400, { ok: false, error: check.error }); return; }
-        await dispatchPrint(check.value);
-        sendJson(res, 200, { ok: true, success: true, printerId: check.value.printerId });
+
+        // Resolve the physical destination from LOCAL config only.
+        const printer = store.getPrinter(check.value.printerId);
+        if (!printer) {
+          sendJson(res, 404, { ok: false, error: "Printer not found" });
+          return;
+        }
+        const jobId = `job-${Date.now().toString(36)}-${Math.random()
+          .toString(36)
+          .slice(2, 8)}`;
+        // Serialized per printer; resolves only after the job truly completed.
+        await dispatchPrint(
+          printerToDispatchJob(printer, check.value.data, jobId)
+        );
+        sendJson(res, 200, {
+          ok: true,
+          success: true,
+          printerId: printer.id,
+          jobId,
+          status: "completed",
+        });
         return;
       }
 

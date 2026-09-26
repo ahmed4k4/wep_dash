@@ -3,7 +3,8 @@
 import { useCallback, useEffect, useState } from "react";
 import { generateAllPrintJobs } from "@/lib/printing";
 import { INVOICE_CONFIG } from "@/printing/invoice";
-import type { Order, Printer } from "@/types";
+import { FULL_INVOICE_ROLE } from "@/lib/local-printer-assignment";
+import type { Order } from "@/types";
 
 /**
  * Visual preview for the raster print pipeline.
@@ -23,7 +24,7 @@ interface DecodedPiece {
 }
 
 interface DecodedJob {
-  printerId: string;
+  role: string;
   bytes: number;
   pieces: DecodedPiece[];
 }
@@ -110,12 +111,10 @@ const SAMPLE_ORDER: Order = {
   ],
 };
 
-const SAMPLE_PRINTERS: Printer[] = [
-  { id: "pr-jubna", name: "طابعة الجبنة", type: "usb" },
-  { id: "pr-butcher", name: "طابعة الجزارة", type: "usb" },
-  { id: "pr-full", name: "طابعة الفاتورة", type: "usb", isFullInvoicePrinter: true },
-];
-
+/** Friendly label for a logical role (department name or full invoice). */
+function roleLabel(role: string): string {
+  return role === FULL_INVOICE_ROLE ? "الفاتورة الكاملة" : role;
+}
 export default function PrintPreviewPage() {
   const [jobs, setJobs] = useState<DecodedJob[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -124,19 +123,12 @@ export default function PrintPreviewPage() {
   );
 
   const generate = async (width: "58mm" | "80mm" = paperWidth) => {
-    const printers = new Map(SAMPLE_PRINTERS.map((p) => [p.id, p]));
-    const deptMap = new Map<string, string>([
-      ["جبنة", "pr-jubna"],
-      ["جزارة", "pr-butcher"],
-    ]);
-    const raw = await generateAllPrintJobs(
-      SAMPLE_ORDER,
-      printers,
-      deptMap,
-      { shopName: INVOICE_CONFIG.shop.name, paperWidth: width }
-    );
+    const raw = await generateAllPrintJobs(SAMPLE_ORDER, {
+      shopName: INVOICE_CONFIG.shop.name,
+      paperWidth: width,
+    });
     return raw.map((j) => ({
-      printerId: j.printerId,
+      role: j.role,
       bytes: j.data.length,
       pieces: decodeEscpos(j.data),
     }));
@@ -225,7 +217,7 @@ export default function PrintPreviewPage() {
           {jobs?.map((job, idx) => (
             <div key={idx} className="overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm">
               <div className="flex items-center justify-between border-b border-slate-200 bg-slate-50 px-4 py-2">
-                <span className="text-sm font-semibold text-slate-700">{job.printerId}</span>
+                <span className="text-sm font-semibold text-slate-700">{roleLabel(job.role)}</span>
                 <span className="text-xs text-slate-500">{job.bytes} بايت</span>
               </div>
               <ReceiptView job={job} />

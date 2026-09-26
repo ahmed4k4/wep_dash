@@ -9,10 +9,15 @@
 const net = require("net");
 const { sendToNetworkPrinter } = require("./tcp");
 const { sendToUSBPrinter, listUSBPrinters, parseUsbDeviceId } = require("./usb");
+const { enqueue, isBusy } = require("./queue");
 const { WRITE_TIMEOUT_MS, CONNECT_TIMEOUT_MS } = require("../config/security");
 
-/** Dispatch an already-validated print request to the correct transport. */
-async function dispatchPrint(job) {
+/**
+ * Actually perform a single job's transport work (no queueing here).
+ * The write timeout is enforced by the transport itself now; this is a belt
+ * and braces ceiling in case a transport implementation forgets one.
+ */
+async function performPrint(job) {
   const isUsb = job.type === "usb" || job.connection === "usb";
 
   let work;
@@ -36,10 +41,22 @@ async function dispatchPrint(job) {
   }
 
   const timeout = new Promise((_, reject) =>
-    setTimeout(() => reject(new Error("ETIMEDOUT: Print write timeout")), WRITE_TIMEOUT_MS)
+    setTimeout(() => reject(new Error("ETIMEDOUT: Print write timeout")), WRITE_TIMEOUT_MS + 1000)
   );
 
   await Promise.race([work, timeout]);
+}
+
+/**
+ * Dispatch an already-validated print request to the correct transport.
+ *
+ * Jobs bound for the SAME printerId are serialized through a per-printer
+ * queue, so consecutive print jobs never overlap on one device. Different
+ * printers run independently. Resolves only after THIS job truly completed.
+ */
+async function dispatchPrint(job) {
+  const printerId = job.printerId || `${job.address || "usb"}:${job.port || ""}`;
+  return enqueue(printerId, () => performPrint(job));
 }
 
 /** Check whether a TCP host:port accepts a connection. */
@@ -72,6 +89,8 @@ function probeTcp(address, port) {
  */
 async function probePrinter(printer) {
   if (!printer) return "unknown";
+  // A printer with an in-flight job is "printing" regardless of connection.
+  if (isBusy(printer.id)) return "printing";
   if (printer.connection === "tcp") {
     return probeTcp(printer.address, printer.port);
   }
@@ -95,4 +114,11 @@ async function withStatus(printers) {
   );
 }
 
-module.exports = { dispatchPrint, listUSBPrinters, probePrinter, withStatus };
+module.exports = {
+  dispatchPrint,
+  performPrint,
+  listUSBPrinters,
+  probePrinter,
+  withStatus,
+  queue: require("./queue"),
+};

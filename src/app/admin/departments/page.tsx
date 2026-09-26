@@ -14,7 +14,7 @@ export default function DepartmentsPage() {
         </div>
       </header>
       <section className="flex-1 p-6 overflow-y-auto">
-        <DepartmentPrinterPanel showPrintersTab={false} />
+        <DepartmentPrinterPanel />
       </section>
     </main>
   );

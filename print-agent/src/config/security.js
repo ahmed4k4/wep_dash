@@ -15,6 +15,8 @@ const LOCAL_ORIGIN_RE = /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/;
 const MAX_BODY_BYTES = 6 * 1024 * 1024;
 const CONNECT_TIMEOUT_MS = 5000;
 const WRITE_TIMEOUT_MS = 15000;
+const CLOSE_TIMEOUT_MS = 4000;
+const USB_TRANSFER_TIMEOUT_MS = 15000;
 const PROFILES = ["usb", "network"];
 const CONNECTIONS = ["usb", "tcp"];
 const PAPER_WIDTHS = [58, 80];
@@ -95,38 +97,29 @@ function validatePrinterConfig(body) {
   return { ok: true, value };
 }
 
-/** Validate a print request body → { ok, value } | { ok:false, error }. */
+/**
+ * Validate a print request body → { ok, value } | { ok:false, error }.
+ *
+ * SECURITY: the website may ONLY send a `printerId` that the agent already
+ * knows about, plus the binary `data`. The agent resolves the physical
+ * destination (address/port/vendorId) from its OWN local config. This ensures
+ * the website can never turn the agent into an arbitrary TCP proxy.
+ */
 function validatePrintRequest(body) {
   if (!body || typeof body !== "object") return { ok: false, error: "Invalid JSON body" };
-  const { printerId, data, type, address, port } = body;
+  const { printerId, data } = body;
 
   if (!isValidId(printerId)) return { ok: false, error: "Invalid printerId" };
   if (typeof data !== "string" || data.length === 0)
     return { ok: false, error: "Missing or invalid data" };
   if (data.length > MAX_BODY_BYTES) return { ok: false, error: "Payload too large" };
 
-  const profile = type === "usb" ? "usb" : "network";
-  if (!PROFILES.includes(profile))
-    return { ok: false, error: `Unsupported printer type: ${profile}` };
-
-  if (profile === "network") {
-    if (!isValidHost(address)) return { ok: false, error: "Invalid printer address" };
-    const p = port ? Number(port) : 9100;
-    if (!isValidPort(p)) return { ok: false, error: "Invalid printer port" };
-    return { ok: true, value: { printerId, data, type: "network", address, port: p } };
-  }
-
-  const vendorId = parseInt(body.vendorId, 16);
-  const productId = parseInt(body.productId, 16);
-  if (!Number.isInteger(vendorId) || vendorId <= 0)
-    return { ok: false, error: "Invalid vendorId" };
-  if (!Number.isInteger(productId) || productId <= 0)
-    return { ok: false, error: "Invalid productId" };
-  return { ok: true, value: { printerId, data, type: "usb", vendorId, productId } };
+  return { ok: true, value: { printerId, data } };
 }
 
 module.exports = {
   ALLOWED_ORIGINS, MAX_BODY_BYTES, CONNECT_TIMEOUT_MS, WRITE_TIMEOUT_MS,
+  CLOSE_TIMEOUT_MS, USB_TRANSFER_TIMEOUT_MS,
   CONNECTIONS, PAPER_WIDTHS,
   isOriginAllowed, isValidId, isValidHost, isValidIPv4, isValidPort,
   isValidPaperWidth, validatePrinterConfig, validatePrintRequest,

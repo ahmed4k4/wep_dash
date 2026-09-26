@@ -246,7 +246,23 @@ function registerIpc() {
       const payload = buildTestPayload(printer, {});
       const check = validatePrintRequest(payload);
       if (!check.ok) return { ok: false, error: check.error };
-      await dispatchPrint({ ...check.value, usbDeviceId: printer.usbDeviceId });
+      // Resolve the physical destination from LOCAL config (same as HTTP).
+      const job =
+        printer.connection === "usb"
+          ? {
+              printerId: printer.id,
+              type: "usb",
+              data: check.value.data,
+              usbDeviceId: printer.usbDeviceId,
+            }
+          : {
+              printerId: printer.id,
+              type: "network",
+              data: check.value.data,
+              address: printer.address,
+              port: printer.port,
+            };
+      await dispatchPrint(job);
       return { ok: true };
     } catch (err) {
       return { ok: false, error: err.message || String(err) };

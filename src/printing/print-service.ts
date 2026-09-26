@@ -2,9 +2,12 @@
 
 /**
  * Print service — orchestrates the whole raster pipeline:
- *   Order + printer assignment → template blocks → 1bpp bitmap → ESC/POS
- * returns same shape as legacy `generateAllPrintJobs` ({ printerId, data })
- * so print-client.ts keeps working with only `await`.
+ *   Order + logical role assignment → template blocks → 1bpp bitmap → ESC/POS
+ *
+ * Job generation is ROLE-BASED: each job carries a logical `role` (a department
+ * name or the full-invoice role). The physical printer is resolved LATER by the
+ * print-client through the per-machine local assignment. This keeps physical
+ * printer configuration out of Firebase entirely.
  *
  * The invoice DESIGN comes entirely from the centralized configuration in
  * `src/printing/invoice/`. This service only: builds blocks (templates),
@@ -12,7 +15,7 @@
  * not contain design literals.
  */
 
-import type { Order, Printer, DepartmentName } from "@/types";
+import type { Order } from "@/types";
 import { buildFullInvoice, buildDepartmentInvoice } from "@/printing/templates";
 import type { RasterBlock } from "@/printing/renderer/raster";
 import { rasterizeBlocks } from "@/printing/renderer/raster";
@@ -23,6 +26,7 @@ import {
   resolveInvoiceConfig,
 } from "@/printing/invoice/invoice-config";
 import type { InvoiceConfigOverride } from "@/printing/invoice/invoice-types";
+import { FULL_INVOICE_ROLE } from "@/lib/local-printer-assignment";
 
 export interface PrintConfig {
   shopName?: string;
@@ -37,7 +41,8 @@ export interface PrintConfig {
 export type PrintJob = RenderedJob;
 
 export interface RenderedJob {
-  printerId: string;
+  /** Logical role: a department name, or FULL_INVOICE_ROLE. */
+  role: string;
   data: string;
 }
 
@@ -56,7 +61,8 @@ function estimateHeight(blocks: RasterBlock[], lineHeight: number): number {
   let total = 0;
   for (const b of blocks) {
     total += Math.max(0, (b.marginTop ?? 0) + (b.marginBottom ?? 0));
-    for (const l of b.lines) total += Math.max(1, Math.ceil((l.size ?? 12) * 1.25) + (b.spacing ?? 0));
+    for (const l of b.lines)
+      total += Math.max(1, Math.ceil((l.size ?? 12) * 1.25) + (b.spacing ?? 0));
   }
   return Math.max(32, Math.ceil(total) * lineHeight);
 }
@@ -129,10 +135,17 @@ function deepMergeOverride(
   return out;
 }
 
+/**
+ * Generate role-based print jobs for an order:
+ *  - one job per distinct department present in the order,
+ *  - one full-invoice job.
+ *
+ * The physical printer for each role is resolved by the print-client from the
+ * per-machine local assignment. Roles with no local assignment are skipped
+ * there (the website never invents a printer).
+ */
 export async function generateAllPrintJobs(
   order: Order,
-  printers: Map<string, Printer>,
-  departmentPrinterMap: Map<DepartmentName, string>,
   config: PrintConfig
 ): Promise<RenderedJob[]> {
   const override = buildOverride(config);
@@ -140,23 +153,24 @@ export async function generateAllPrintJobs(
   const paperWidth = resolved.paper.width;
   const jobs: RenderedJob[] = [];
 
-  // Department jobs
+  // Distinct departments present in the order.
+  const departments = new Set<string>();
   for (const item of order.items) {
     const dept = item.department || "";
-    if (!dept) continue;
-    const printerId = departmentPrinterMap.get(dept);
-    const printer = printerId ? printers.get(printerId) : undefined;
-    if (!printer) continue;
-    const bytes = await renderToEscpos(buildDepartmentInvoice(order, dept), paperWidth);
-    jobs.push({ printerId: printer.id, data: bytesToBinaryString(bytes) });
+    if (dept) departments.add(dept);
   }
 
-  // Full invoice
-  const full = Array.from(printers.values()).find((p) => p.isFullInvoicePrinter);
-  if (full) {
-    const bytes = await renderToEscpos(buildFullInvoice(order), paperWidth);
-    jobs.push({ printerId: full.id, data: bytesToBinaryString(bytes) });
+  for (const dept of departments) {
+    const bytes = await renderToEscpos(
+      buildDepartmentInvoice(order, dept),
+      paperWidth
+    );
+    jobs.push({ role: dept, data: bytesToBinaryString(bytes) });
   }
+
+  // Full invoice role.
+  const fullBytes = await renderToEscpos(buildFullInvoice(order), paperWidth);
+  jobs.push({ role: FULL_INVOICE_ROLE, data: bytesToBinaryString(fullBytes) });
 
   return jobs;
 }

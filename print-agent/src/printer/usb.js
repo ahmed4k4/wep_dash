@@ -11,6 +11,8 @@
  * the `usb` package is an optionalDependency.
  */
 
+const { USB_TRANSFER_TIMEOUT_MS } = require("../config/security");
+
 let usbLib = null;
 let usbChecked = false;
 
@@ -97,6 +99,20 @@ function safeString(device, index) {
   }
 }
 
+/**
+ * Send a complete binary ESC/POS payload to a USB printer.
+ *
+ * Lifecycle (professional, repeatable):
+ *   1. Locate the configured device.
+ *   2. Open the device and claim the printer interface.
+ *   3. Send the whole payload in bounded chunks, each with a hard timeout.
+ *   4. Release the interface and close the device EXACTLY once (idempotent),
+ *      even on error, so the handle is never left in a broken state.
+ *   5. Resolve only after the final transfer completed.
+ *
+ * The device is NOT reset between jobs; an open/release cycle per job keeps
+ * the printer usable for the next job without a reset.
+ */
 function sendToUSBPrinter(vendorId, productId, data) {
   return new Promise((resolve, reject) => {
     const usb = getUsbLib();
@@ -109,7 +125,33 @@ function sendToUSBPrinter(vendorId, productId, data) {
       return;
     }
 
-    let device;
+    let device = null;
+    let iface = null;
+    let settled = false;
+    let cleanupDone = false;
+
+    /** Release interface + close device exactly once. Never throws. */
+    const cleanup = () => {
+      if (cleanupDone) return;
+      cleanupDone = true;
+      try { if (iface && iface.release) iface.release(); } catch { /* ignore */ }
+      try { if (device && device.close) device.close(); } catch { /* ignore */ }
+    };
+
+    const fail = (err) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      reject(err);
+    };
+
+    const succeed = () => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      resolve();
+    };
+
     try {
       device = usb.findByIds(vendorId, productId);
       if (!device) {
@@ -117,31 +159,34 @@ function sendToUSBPrinter(vendorId, productId, data) {
         return;
       }
       device.open();
-      const iface = device.interfaces && device.interfaces[0];
-      if (!iface) { device.close(); reject(new Error("No interface found")); return; }
+      iface = device.interfaces && device.interfaces[0];
+      if (!iface) { fail(new Error("No interface found")); return; }
       iface.claim();
       const out = iface.endpoints.find((ep) => ep.direction === "out");
-      if (!out) {
-        try { iface.release(); } catch { /* ignore */ }
-        device.close();
-        reject(new Error("No OUT endpoint found"));
-        return;
-      }
+      if (!out) { fail(new Error("No OUT endpoint found")); return; }
 
       const buffer = Buffer.from(data, "binary");
-      const chunkSize = out.maxPacketSize || 64;
+      // Bulk OUT transfers should be whole multiples of the max packet size
+      // (except the final chunk). Default to 64 bytes when unknown.
+      const packet = out.maxPacketSize || 64;
+      const chunkSize = Math.max(packet, Math.floor(8192 / packet) * packet);
       let offset = 0;
 
-      const cleanup = () => {
-        try { iface.release(); } catch { /* ignore */ }
-        try { device.close(); } catch { /* ignore */ }
-      };
-
       const writeChunk = () => {
+        if (settled) return;
         const chunk = buffer.subarray(offset, offset + chunkSize);
-        if (chunk.length === 0) { cleanup(); resolve(); return; }
+        if (chunk.length === 0) { succeed(); return; }
+
+        let timedOut = false;
+        const timer = setTimeout(() => {
+          timedOut = true;
+          fail(new Error("ETIMEDOUT: USB transfer timeout"));
+        }, USB_TRANSFER_TIMEOUT_MS);
+
         out.transfer(chunk, (err) => {
-          if (err) { cleanup(); reject(err); return; }
+          clearTimeout(timer);
+          if (timedOut) return;
+          if (err) { fail(err); return; }
           offset += chunk.length;
           writeChunk();
         });
@@ -149,8 +194,7 @@ function sendToUSBPrinter(vendorId, productId, data) {
 
       writeChunk();
     } catch (err) {
-      try { device && device.close(); } catch { /* ignore */ }
-      reject(err);
+      fail(err);
     }
   });
 }
